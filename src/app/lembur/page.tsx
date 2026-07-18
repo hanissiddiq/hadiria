@@ -99,7 +99,7 @@ export default function CheckInPage() {
           setAddress('Gagal mendapatkan alamat');
         }
 
-        if (dist <= OFFICE_LOCATION.RADIUS_M)
+        if (dist <= OFFICE_LOCATION.radius_m)
           setLocationStatus('Dalam radius kantor');
         else
           setLocationStatus('Luar radius kantor');
@@ -392,7 +392,7 @@ export default function CheckInPage() {
             Status Lokasi (radius 200m dari kantor):
           </p>
 
-          <p className={`text-sm ${distance && distance <= OFFICE_LOCATION.RADIUS_M ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`text-sm ${distance && distance <= OFFICE_LOCATION.radius_m ? 'text-green-600' : 'text-red-600'}`}>
             {locationStatus}
           </p>
 
