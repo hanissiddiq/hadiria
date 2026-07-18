@@ -6,11 +6,21 @@ import { redirect, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { toast, Toaster } from 'react-hot-toast';
 
-const OFFICE_LOCATION = {
-  latitude: 5.179003,
-  longitude: 97.149272,
-  RADIUS_M: 200,
-};
+// const OFFICE_LOCATION = {
+//   latitude: 5.179003,
+//   longitude: 97.149272,
+//   RADIUS_M: 200,
+// };
+
+const OFFICE_LOCATION = JSON.parse(
+  process.env.NEXT_PUBLIC_LOCATION ||
+    `{
+      "latitude":5.179003,
+      "longitude":97.149272,
+      "radius_m":200,
+      "city":"lhokseumawe"
+    }`
+);
 
 const WIB_OFFSET = 7 * 60 * 60 * 1000;
 const getTodayWIB = () =>
