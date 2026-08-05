@@ -1,0 +1,565 @@
+create table public.hasil_sidak_ki (
+  id bigint generated always as identity not null,
+  iduser uuid not null,
+  periode_bulan text not null,
+  tanggal_sidak date not null,
+  jenis_temuan text not null,
+  tingkat_temuan text not null,
+  catatan text null,
+  created_at timestamp with time zone null default now(),
+  constraint hasil_sidak_ki_pkey primary key (id),
+  constraint hasil_sidak_ki_iduser_fkey foreign KEY (iduser) references profiles (id)
+) TABLESPACE pg_default;
+
+create table public.peer_review_assignments (
+  id uuid not null default gen_random_uuid (),
+  assessor_id uuid not null,
+  assessed_id uuid not null,
+  period_semester integer not null,
+  period_year integer not null,
+  is_completed boolean null default false,
+  created_at timestamp with time zone null default now(),
+  constraint peer_review_assignments_pkey primary key (id),
+  constraint peer_review_assignments_assessed_id_fkey foreign KEY (assessed_id) references auth.users (id),
+  constraint peer_review_assignments_assessor_id_fkey foreign KEY (assessor_id) references auth.users (id)
+) TABLESPACE pg_default;
+
+create unique INDEX IF not exists uniq_peer_assignment on public.peer_review_assignments using btree (
+  assessor_id,
+  assessed_id,
+  period_semester,
+  period_year
+) TABLESPACE pg_default;
+
+create table public.peer_assessments (
+  id uuid not null default gen_random_uuid (),
+  assignment_id uuid not null,
+  assessor_id uuid not null,
+  assessed_id uuid not null,
+  period_semester integer not null,
+  period_year integer not null,
+  integritas integer not null,
+  profesionalisme integer not null,
+  sinergi integer not null,
+  pelayanan integer not null,
+  komitmen_kerja integer not null,
+  notes text null,
+  created_at timestamp with time zone null default now(),
+  constraint peer_assessments_pkey primary key (id),
+  constraint peer_assessments_assessor_id_fkey foreign KEY (assessor_id) references auth.users (id),
+  constraint peer_assessments_assignment_id_fkey foreign KEY (assignment_id) references peer_review_assignments (id) on delete CASCADE,
+  constraint peer_assessments_assessed_id_fkey foreign KEY (assessed_id) references auth.users (id),
+  constraint peer_assessments_profesionalisme_check check (
+    (
+      (profesionalisme >= 1)
+      and (profesionalisme <= 4)
+    )
+  ),
+  constraint peer_assessments_sinergi_check check (
+    (
+      (sinergi >= 1)
+      and (sinergi <= 4)
+    )
+  ),
+  constraint peer_assessments_integritas_check check (
+    (
+      (integritas >= 1)
+      and (integritas <= 4)
+    )
+  ),
+  constraint peer_assessments_komitmen_kerja_check check (
+    (
+      (komitmen_kerja >= 1)
+      and (komitmen_kerja <= 4)
+    )
+  ),
+  constraint peer_assessments_pelayanan_check check (
+    (
+      (pelayanan >= 1)
+      and (pelayanan <= 4)
+    )
+  )
+) TABLESPACE pg_default;
+
+
+
+create table public.supervisor_assessments (
+  id uuid not null default gen_random_uuid (),
+  assessor_id uuid not null,
+  assessed_id uuid not null,
+  assessor_role text not null,
+  period_semester integer not null,
+  period_year integer not null,
+  integritas integer not null,
+  profesionalisme integer not null,
+  sinergi integer not null,
+  pelayanan integer not null,
+  komitmen_kerja integer not null,
+  catatan text null,
+  created_at timestamp with time zone null default now(),
+  constraint supervisor_assessments_pkey primary key (id),
+  constraint supervisor_assessments_assessed_id_fkey foreign KEY (assessed_id) references profiles (id),
+  constraint supervisor_assessments_assessor_id_fkey foreign KEY (assessor_id) references profiles (id)
+) TABLESPACE pg_default;
+
+
+
+create view public.v_rapor_bulanan
+with
+  (security_invoker = on) as
+with
+  attendance_calc as (
+    select
+      attendances.user_id,
+      date_trunc(
+        'month'::text,
+        attendances.attendance_date::timestamp with time zone
+      )::date as bulan,
+      count(*) filter (
+        where
+          attendances.status = 'Hadir'::text
+      ) as total_hadir,
+      count(*) filter (
+        where
+          attendances.check_in is not null
+          and attendances.check_in > attendances.shift_start
+      ) as terlambat,
+      count(*) filter (
+        where
+          attendances.check_in_distance_m > 100::double precision
+      ) as absen_luar_radius
+    from
+      attendances
+    group by
+      attendances.user_id,
+      (
+        date_trunc(
+          'month'::text,
+          attendances.attendance_date::timestamp with time zone
+        )
+      )
+  ),
+  logbook_calc as (
+    select
+      logbooks.user_id,
+      date_trunc(
+        'month'::text,
+        logbooks.log_date::timestamp with time zone
+      )::date as bulan,
+      count(*) as jumlah_logbook
+    from
+      logbooks
+    group by
+      logbooks.user_id,
+      (
+        date_trunc(
+          'month'::text,
+          logbooks.log_date::timestamp with time zone
+        )
+      )
+  ),
+  leave_calc as (
+    select
+      leave_requests.user_id,
+      date_trunc(
+        'month'::text,
+        leave_requests.start_date::timestamp with time zone
+      )::date as bulan,
+      count(*) as jumlah_cuti
+    from
+      leave_requests
+    where
+      leave_requests.status = 'Disetujui'::text
+    group by
+      leave_requests.user_id,
+      (
+        date_trunc(
+          'month'::text,
+          leave_requests.start_date::timestamp with time zone
+        )
+      )
+  ),
+  permission_calc as (
+    select
+      permission_requests.user_id,
+      date_trunc(
+        'month'::text,
+        permission_requests.tanggal_mulai::timestamp with time zone
+      )::date as bulan,
+      count(*) as jumlah_izin
+    from
+      permission_requests
+    where
+      permission_requests.status = 'Disetujui'::text
+    group by
+      permission_requests.user_id,
+      (
+        date_trunc(
+          'month'::text,
+          permission_requests.tanggal_mulai::timestamp with time zone
+        )
+      )
+  ),
+  lembur_calc as (
+    select
+      lembur.user_id,
+      date_trunc(
+        'month'::text,
+        lembur.attendance_date::timestamp with time zone
+      )::date as bulan,
+      count(*) as jumlah_lembur
+    from
+      lembur
+    group by
+      lembur.user_id,
+      (
+        date_trunc(
+          'month'::text,
+          lembur.attendance_date::timestamp with time zone
+        )
+      )
+  )
+select
+  p.id as user_id,
+  p.full_name as nama_pegawai,
+  p."position" as jabatan,
+  a.bulan,
+  a.total_hadir,
+  a.terlambat,
+  a.absen_luar_radius,
+  COALESCE(l.jumlah_logbook, 0::bigint) as logbook,
+  COALESCE(c.jumlah_cuti, 0::bigint) as cuti,
+  COALESCE(i.jumlah_izin, 0::bigint) as izin,
+  COALESCE(lb.jumlah_lembur, 0::bigint) as lembur,
+  GREATEST(100 - a.terlambat * 5, 0::bigint) as skor_disiplin
+from
+  attendance_calc a
+  join profiles p on p.id = a.user_id
+  left join logbook_calc l on l.user_id = a.user_id
+  and l.bulan = a.bulan
+  left join leave_calc c on c.user_id = a.user_id
+  and c.bulan = a.bulan
+  left join permission_calc i on i.user_id = a.user_id
+  and i.bulan = a.bulan
+  left join lembur_calc lb on lb.user_id = a.user_id
+  and lb.bulan = a.bulan
+where
+  p.role = 'pegawai'::text;
+
+create view public.v_temuan_ki
+with
+  (security_invoker = on) as
+select
+  t.id,
+  p.full_name,
+  t.iduser,
+  t.periode_bulan,
+  t.tanggal_sidak,
+  t.jenis_temuan,
+  t.tingkat_temuan,
+  t.catatan,
+  t.created_at
+from
+  hasil_sidak_ki t
+  join profiles p on p.id = t.iduser;  
+
+create view public.v_assessment_summary
+with
+  (security_invoker = on) as
+with
+  peer as (
+    select
+      peer_assessments.assessed_id,
+      peer_assessments.period_year,
+      peer_assessments.period_semester,
+      round(
+        avg(
+          (
+            peer_assessments.integritas + peer_assessments.profesionalisme + peer_assessments.sinergi + peer_assessments.pelayanan + peer_assessments.komitmen_kerja
+          )::numeric / 5.0
+        ),
+        2
+      ) as peer_score
+    from
+      peer_assessments
+    group by
+      peer_assessments.assessed_id,
+      peer_assessments.period_year,
+      peer_assessments.period_semester
+  ),
+  spv as (
+    select
+      supervisor_assessments.assessed_id,
+      supervisor_assessments.period_year,
+      supervisor_assessments.period_semester,
+      round(
+        avg(
+          (
+            supervisor_assessments.integritas + supervisor_assessments.profesionalisme + supervisor_assessments.sinergi + supervisor_assessments.pelayanan + supervisor_assessments.komitmen_kerja
+          )::numeric / 5.0
+        ),
+        2
+      ) as supervisor_score
+    from
+      supervisor_assessments
+    group by
+      supervisor_assessments.assessed_id,
+      supervisor_assessments.period_year,
+      supervisor_assessments.period_semester
+  ),
+  periods as (
+    select distinct
+      peer_assessments.period_year,
+      peer_assessments.period_semester
+    from
+      peer_assessments
+    union
+    select distinct
+      supervisor_assessments.period_year,
+      supervisor_assessments.period_semester
+    from
+      supervisor_assessments
+  )
+select
+  p.id as user_id,
+  p.full_name,
+  per.period_year,
+  per.period_semester,
+  COALESCE(peer.peer_score, 0::numeric) as peer_score,
+  COALESCE(spv.supervisor_score, 0::numeric) as supervisor_score,
+  round(
+    COALESCE(peer.peer_score, 0::numeric) * 0.4 + COALESCE(spv.supervisor_score, 0::numeric) * 0.6,
+    2
+  ) as weighted_score,
+  round(
+    60::numeric + (
+      COALESCE(peer.peer_score, 0::numeric) * 0.4 + COALESCE(spv.supervisor_score, 0::numeric) * 0.6 - 1::numeric
+    ) * 40::numeric / 3::numeric,
+    2
+  ) as final_score
+from
+  profiles p
+  cross join periods per
+  left join peer on peer.assessed_id = p.id
+  and peer.period_year = per.period_year
+  and peer.period_semester = per.period_semester
+  left join spv on spv.assessed_id = p.id
+  and spv.period_year = per.period_year
+  and spv.period_semester = per.period_semester
+where
+  p.role = 'pegawai'::text;
+  
+  
+create view public.v_peer_scores
+with
+  (security_invoker = on) as
+select
+  assessed_id as user_id,
+  period_semester as period_month,
+  period_year,
+  round(avg(integritas), 2) as integritas,
+  round(avg(profesionalisme), 2) as profesionalisme,
+  round(avg(sinergi), 2) as sinergi,
+  round(avg(pelayanan), 2) as pelayanan,
+  round(avg(komitmen_kerja), 2) as komitmen_kerja,
+  round(
+    (
+      avg(integritas) + avg(profesionalisme) + avg(sinergi) + avg(pelayanan) + avg(komitmen_kerja)
+    ) / 5::numeric,
+    2
+  ) as final_score,
+  (
+    select
+      profiles.full_name
+    from
+      profiles
+    where
+      profiles.id = a.assessed_id
+  ) as nama
+from
+  peer_assessments a
+group by
+  assessed_id,
+  period_semester,
+  period_year;
+
+
+create view public.v_rapor
+with
+  (security_invoker = on) as
+with
+  disiplin as (
+    select
+      v_rapor_bulanan.user_id,
+      EXTRACT(
+        year
+        from
+          v_rapor_bulanan.bulan
+      )::integer as period_year,
+      case
+        when EXTRACT(
+          month
+          from
+            v_rapor_bulanan.bulan
+        ) <= 6::numeric then 1
+        else 2
+      end as period_semester,
+      round(avg(v_rapor_bulanan.skor_disiplin), 2) as discipline_score
+    from
+      v_rapor_bulanan
+    group by
+      v_rapor_bulanan.user_id,
+      (
+        EXTRACT(
+          year
+          from
+            v_rapor_bulanan.bulan
+        )
+      ),
+      (
+        case
+          when EXTRACT(
+            month
+            from
+              v_rapor_bulanan.bulan
+          ) <= 6::numeric then 1
+          else 2
+        end
+      )
+  ),
+  survei as (
+    select
+      nilaisurvei.iduser::uuid as user_id,
+      regexp_replace(
+        nilaisurvei.periode_bulan,
+        '^(Juni|Desember)\s+'::text,
+        ''::text
+      )::integer as period_year,
+      case
+        when lower(nilaisurvei.periode_bulan) ~~ 'juni%'::text then 1
+        else 2
+      end as period_semester,
+      round(avg(nilaisurvei.nilai_akhir * 10::numeric), 2) as survey_score
+    from
+      nilaisurvei
+    group by
+      nilaisurvei.iduser,
+      nilaisurvei.periode_bulan
+  ),
+  ki as (
+    select
+      hasil_sidak_ki.iduser as user_id,
+      EXTRACT(
+        year
+        from
+          hasil_sidak_ki.tanggal_sidak
+      )::integer as period_year,
+      case
+        when EXTRACT(
+          month
+          from
+            hasil_sidak_ki.tanggal_sidak
+        ) <= 6::numeric then 1
+        else 2
+      end as period_semester,
+      GREATEST(
+        0::bigint,
+        100 - sum(
+          case
+            when lower(hasil_sidak_ki.tingkat_temuan) = 'ringan'::text then 1
+            else 0
+          end
+        ) - sum(
+          case
+            when lower(hasil_sidak_ki.tingkat_temuan) = 'sedang'::text then 3
+            else 0
+          end
+        ) - sum(
+          case
+            when lower(hasil_sidak_ki.tingkat_temuan) = 'berat'::text then 500
+            else 0
+          end
+        )
+      ) as ki_score
+    from
+      hasil_sidak_ki
+    group by
+      hasil_sidak_ki.iduser,
+      (
+        EXTRACT(
+          year
+          from
+            hasil_sidak_ki.tanggal_sidak
+        )
+      ),
+      (
+        case
+          when EXTRACT(
+            month
+            from
+              hasil_sidak_ki.tanggal_sidak
+          ) <= 6::numeric then 1
+          else 2
+        end
+      )
+  ),
+  periods as (
+    select distinct
+      v_assessment_summary.period_year,
+      v_assessment_summary.period_semester
+    from
+      v_assessment_summary
+    union
+    select distinct
+      disiplin.period_year,
+      disiplin.period_semester
+    from
+      disiplin
+  )
+select
+  p.id as user_id,
+  p.full_name,
+  per.period_year,
+  per.period_semester,
+  COALESCE(d.discipline_score, 0::numeric) as discipline_score,
+  COALESCE(a.final_score, 0::numeric) as behavior_score,
+  COALESCE(s.survey_score, 0::numeric) as survey_score,
+  COALESCE(k.ki_score, 100::bigint) as ki_score,
+  round(
+    COALESCE(d.discipline_score, 0::numeric) * 0.40 + COALESCE(a.final_score, 0::numeric) * 0.20 + COALESCE(s.survey_score, 0::numeric) * 0.30 + COALESCE(k.ki_score, 100::bigint)::numeric * 0.10,
+    2
+  ) as final_score,
+  case
+    when round(
+      COALESCE(d.discipline_score, 0::numeric) * 0.40 + COALESCE(a.final_score, 0::numeric) * 0.20 + COALESCE(s.survey_score, 0::numeric) * 0.30 + COALESCE(k.ki_score, 100::bigint)::numeric * 0.10,
+      2
+    ) >= 90::numeric then 'Sangat Baik'::text
+    when round(
+      COALESCE(d.discipline_score, 0::numeric) * 0.40 + COALESCE(a.final_score, 0::numeric) * 0.20 + COALESCE(s.survey_score, 0::numeric) * 0.30 + COALESCE(k.ki_score, 100::bigint)::numeric * 0.10,
+      2
+    ) >= 75::numeric then 'Baik'::text
+    when round(
+      COALESCE(d.discipline_score, 0::numeric) * 0.40 + COALESCE(a.final_score, 0::numeric) * 0.20 + COALESCE(s.survey_score, 0::numeric) * 0.30 + COALESCE(k.ki_score, 100::bigint)::numeric * 0.10,
+      2
+    ) >= 60::numeric then 'Cukup'::text
+    else 'Kurang'::text
+  end as predikat
+from
+  profiles p
+  cross join periods per
+  left join v_assessment_summary a on a.user_id = p.id
+  and a.period_year = per.period_year
+  and a.period_semester = per.period_semester
+  left join disiplin d on d.user_id = p.id
+  and d.period_year = per.period_year
+  and d.period_semester = per.period_semester
+  left join survei s on s.user_id = p.id
+  and s.period_year = per.period_year
+  and s.period_semester = per.period_semester
+  left join ki k on k.user_id = p.id
+  and k.period_year = per.period_year
+  and k.period_semester = per.period_semester
+where
+  p.role = 'pegawai'::text;
+
+
